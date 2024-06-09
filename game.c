@@ -114,18 +114,26 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(comm_cart, &rank);
     MPI_Cart_coords(comm_cart, rank, ndims, coords);
 
-    // max process block size
+    /* *********************************************  
+        ARREGLAR ESTA PARTE, 21/5 = 5 + 5 + 5 + 5 + 1
+        PERO DEBERIA SER     21/5 = 5 + 4 + 4 + 4 + 4 
+     ****************************/
     int size_max[2] = { (int)ceil(cols/dims[X]), (int)ceil((float)rows/dims[Y]) };
-    // own block size
     int size[2] = { size_max[X], size_max[Y] };
+    
     // last block could be smaller
     if(cols%size[X] && coords[X]==dims[X]-1)
         size[X] = cols%size[X];
     if(rows%size[Y] && coords[Y]==dims[Y]-1)
         size[Y] = rows%size[Y];
-
+    
     // global coord for local(0,0)
     int begin[2] = { coords[X]*size_max[X], coords[Y]*size_max[Y]};
+
+    /**************************************
+    /* HASTA ACA IMPACTA,   post condiciones deberian ser size y begin bien calculados 
+    /* size_max no sirve para nada, solo lo uso aca
+    ***************************************/
 
     // alloc grid data
     char* grid = (char*)malloc(size[X]*size[Y]*sizeof(char));
