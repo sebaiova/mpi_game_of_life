@@ -182,7 +182,7 @@ int main(int argc, char *argv[])
     for(int cardinal=0; cardinal<4; cardinal++)
 	for(int side=0; side<2; side++)
 	{
-	    buffer[cardinal][side] = (char*)malloc(sizeof(char)*size_max[cardinal%2]);
+	    buffer[cardinal][side] = (char*)malloc(sizeof(char)*size[cardinal%2]);
 	    memset(buffer[cardinal][side], 0, size[cardinal%2]);
 	}
 
