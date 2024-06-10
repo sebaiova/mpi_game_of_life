@@ -25,6 +25,25 @@ void dimensionalize(int cells, int dims[2])
     dims[Y]=m;
 }
 
+void distribute(const int world[2], const int dims[2], const int coords[2], int size[2], int begin[2])
+{
+    int base_size[2] = { world[X] / dims[X], world[Y] / dims[Y] };
+    int extra_cols = world[X] % dims[X];
+    int extra_rows = world[Y] % dims[Y];
+
+    size[X] = base_size[X];
+    size[Y] = base_size[Y];
+
+    if (coords[X] < extra_cols) 
+        size[X]++;
+    if (coords[Y] < extra_rows) 
+        size[Y]++;
+
+    begin[X] = coords[X] * base_size[X] + (coords[X] < extra_cols ? coords[X] : extra_cols);
+    begin[Y] = coords[Y] * base_size[Y] + (coords[Y] < extra_rows ? coords[Y] : extra_rows);
+};
+
+
 /*Convierte cordenadas (i, j) globales a (y, x) locales
   si las coordenadas globales no se encuentran en el area local, retorna 0, sino 1 */
 int translate(int i, int j, int size[2], int begin[2], int* new_y, int* new_x)
@@ -87,14 +106,15 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    int rows, cols, steps;
-    if (fscanf(f, "cols %d\nrows %d\nsteps %d\n", &cols, &rows, &steps) != 3)
+    int steps;
+    int world[2];
+
+    if (fscanf(f, "cols %d\nrows %d\nsteps %d\n", &world[X], &world[Y], &steps) != 3)
     {
         printf("Error: formato de archivo incorrecto\n");
         return 1;
     }
-
-    assert(rows==cols);
+    assert(world[X]==world[Y]);
 
     MPI_Init(&argc, &argv);
 
@@ -114,26 +134,9 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(comm_cart, &rank);
     MPI_Cart_coords(comm_cart, rank, ndims, coords);
 
-    /* *********************************************  
-        ARREGLAR ESTA PARTE, 21/5 = 5 + 5 + 5 + 5 + 1
-        PERO DEBERIA SER     21/5 = 5 + 4 + 4 + 4 + 4 
-     ****************************/
-    int size_max[2] = { (int)ceil(cols/dims[X]), (int)ceil((float)rows/dims[Y]) };
-    int size[2] = { size_max[X], size_max[Y] };
-    
-    // last block could be smaller
-    if(cols%size[X] && coords[X]==dims[X]-1)
-        size[X] = cols%size[X];
-    if(rows%size[Y] && coords[Y]==dims[Y]-1)
-        size[Y] = rows%size[Y];
-    
-    // global coord for local(0,0)
-    int begin[2] = { coords[X]*size_max[X], coords[Y]*size_max[Y]};
-
-    /**************************************
-    /* HASTA ACA IMPACTA,   post condiciones deberian ser size y begin bien calculados 
-    /* size_max no sirve para nada, solo lo uso aca
-    ***************************************/
+    int size[2];
+    int begin[2];
+    distribute(world, dims, coords, size, begin);
 
     // alloc grid data
     char* grid = (char*)malloc(size[X]*size[Y]*sizeof(char));
@@ -149,7 +152,7 @@ int main(int argc, char *argv[])
     char* line = (char*)malloc(size[X]);    
     int i = 0;
     int x, y;
-    while (i < rows && fgets(line, size[X], f) != NULL) 
+    while (i < world[Y] && fgets(line, size[X], f) != NULL) 
     {
         int line_size = strlen(line) - 1;
         for (int j = 0; j < line_size; j++)
