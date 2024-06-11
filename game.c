@@ -11,7 +11,7 @@ enum { SEND, RECV }; // Send/Recv
 
 /*Arma un grid de dos dimensiones con la cantidad de celdas cells
   cells debe ser par */
-void dimensionalize(int cells, int dims[2])
+static inline __attribute__((always_inline)) void dimensionalize (int cells, int dims[2])
 {
     assert(!(cells%2));
     int n, m;
@@ -25,7 +25,7 @@ void dimensionalize(int cells, int dims[2])
     dims[Y]=m;
 }
 
-void distribute(const int world[2], const int dims[2], const int coords[2], int size[2], int begin[2])
+static inline __attribute__((always_inline)) void distribute(const int world[2], const int dims[2], const int coords[2], int size[2], int begin[2])
 {
     int base_size[2] = { world[X] / dims[X], world[Y] / dims[Y] };
     int extra_cols = world[X] % dims[X];
@@ -46,14 +46,15 @@ void distribute(const int world[2], const int dims[2], const int coords[2], int 
 
 /*Convierte cordenadas (i, j) globales a (y, x) locales
   si las coordenadas globales no se encuentran en el area local, retorna 0, sino 1 */
-int translate(int i, int j, int size[2], int begin[2], int* new_y, int* new_x)
+static inline __attribute__((always_inline)) int translate(int i, int j, int size[2], int begin[2], int* new_y, int* new_x)
 {
     *new_y = (i-begin[Y]); 
     *new_x = (j-begin[X]);
     return (*new_y >= 0 && *new_y < size[Y] && *new_x >= 0 && *new_x < size[X]);
 }
 
-int get_relative_rank(MPI_Comm comm, int dx, int dy, const int coords[2], const int dims[2], int* rank)
+/* Esta funcion ya no se usa
+static inline __attribute__((always_inline)) int get_relative_rank(MPI_Comm comm, int dx, int dy, const int coords[2], const int dims[2], int* rank)
 {
     int to_coords[2] = { coords[X]+dx, coords[Y]+dy };
     if(dims[Y] > to_coords[Y] && to_coords[Y] >= 0)
@@ -61,8 +62,8 @@ int get_relative_rank(MPI_Comm comm, int dx, int dy, const int coords[2], const 
     else
 	    *rank = MPI_PROC_NULL;
 }
-
-void live(int neighbords, const char* old, char* next)
+*/
+static inline __attribute__((always_inline)) void live(int neighbords, const char* old, char* next)
 {
     if (*old == 1) //si tiene 2 o 3 vecinas vivas, sigue viva
         *next = (neighbords == 2 || neighbords == 3) ? 1 : 0;
@@ -71,7 +72,7 @@ void live(int neighbords, const char* old, char* next)
         *next = (neighbords == 3) ? 1 : 0;
 }
 
-void row_limit_step(char** old, char** nextStep, char* buffer, int rel, int y, int width)
+static inline __attribute__((always_inline)) void row_limit_step(char** old, char** nextStep, char* buffer, int rel, int y, int width)
 {
     for(int x=1; x<width-1; x++)
     {
@@ -80,7 +81,7 @@ void row_limit_step(char** old, char** nextStep, char* buffer, int rel, int y, i
     }
 }
 
-void col_limit_step(char** old, char** nextStep, char* buffer, int rel, int x, int height)
+static inline __attribute__((always_inline)) void col_limit_step(char** old, char** nextStep, char* buffer, int rel, int x, int height)
 {
     for(int y=1; y<height-1; y++)
     {
@@ -124,9 +125,9 @@ int main(int argc, char *argv[])
 
     const int ndims = 2;     
     //toroidal    
-    const int periods[2] = {1, 0};      
+    const int periods[2] = {1, 1};      //Se cambio  de {1,0} a {1,1}
     int dims[2];
-    dimensionalize(ranks, dims);
+    MPI_Dims_create(ranks,ndims,dims); // Reemplaza a dimentionalize(ranks,dims)
     MPI_Cart_create(MPI_COMM_WORLD, ndims, dims, periods, 0, &comm_cart);
 
     int rank;
@@ -191,21 +192,28 @@ int main(int argc, char *argv[])
     // Alloc recv/send limit buffers
     char* buffer[4][2]; 
     for(int cardinal=0; cardinal<4; cardinal++)
-	for(int side=0; side<2; side++)
-	{
-	    buffer[cardinal][side] = (char*)malloc(sizeof(char)*size[cardinal%2]);
-	    memset(buffer[cardinal][side], 0, size[cardinal%2]);
-	}
+        for(int side=0; side<2; side++)
+        {
+            buffer[cardinal][side] = (char*)malloc(sizeof(char)*size[cardinal%2]);
+            memset(buffer[cardinal][side], 0, size[cardinal%2]);
+        }
 
     char corner[8][2];
     int neigh[8];
 
     MPI_Cart_shift(comm_cart, 0, 1, &neigh[W], &neigh[E]);
     MPI_Cart_shift(comm_cart, 1, 1, &neigh[N], &neigh[S]);    
+    MPI_Cart_rank(comm_cart, coords[X]-1, coords[Y]-1, &neigh[NW]);
+    MPI_Cart_rank(comm_cart, coords[X]+1, coords[Y]+1, &neigh[SE]);
+    MPI_Cart_rank(comm_cart, coords[X]+1, coords[Y]-1, &neigh[NE]);
+    MPI_Cart_rank(comm_cart, coords[X]-1, coords[Y]+1, &neigh[SW]);
+
+    /*
     get_relative_rank(comm_cart, -1, -1, coords, dims, &neigh[NW]);
     get_relative_rank(comm_cart, +1, +1, coords, dims, &neigh[SE]);
     get_relative_rank(comm_cart, +1, -1, coords, dims, &neigh[NE]);
     get_relative_rank(comm_cart, -1, +1, coords, dims, &neigh[SW]);
+    */
 
     MPI_Request request[2][8];
     MPI_Status status[2][8];
@@ -213,15 +221,19 @@ int main(int argc, char *argv[])
     for(int c=0; c<steps; c++)
     {
 	    //Fill send buffers
-        for(int x=0; x<size[X]; x++)
-   	    {
+        /*for(int x=0; x<size[X]; x++)
+   	    {*/
      	    buffer[N][SEND][x] = old[0][x];
+            MPI_Isend(old[0], size[X], buffer_type[0], neigh[N], 0, comm_cart, &request[SEND][N]);
 	        buffer[S][SEND][x] = old[size[Y]-1][x];
-    	}
+            MPI_Isend(old[size[Y]-1], size[Y], buffer_type[1], neigh[S], 0, comm_cart, &request[SEND][cardinal]);
+    	//}
     	for(int y=0; y<size[Y]; y++)
    	    {
 	        buffer[W][SEND][y] = old[y][0];
+            //MPI_Isend(buffer[cardinal][SEND], 1, buffer_type[cardinal%2], neigh[cardinal], 0, comm_cart, &request[SEND][cardinal]);
  	        buffer[E][SEND][y] = old[y][size[X]-1];
+            //MPI_Isend(buffer[cardinal][SEND], 1, buffer_type[cardinal%2], neigh[cardinal], 0, comm_cart, &request[SEND][cardinal]);
  	    }
 
     	corner[NE][SEND] = old[0][size[X]-1];
@@ -229,34 +241,24 @@ int main(int argc, char *argv[])
     	corner[SE][SEND] = old[size[Y]-1][size[X]-1];
     	corner[SW][SEND] = old[size[Y]-1][0];
 
-	    // Send limit rows/cols
-    	for(int cardinal=0; cardinal<4; cardinal++)
-	        if(neigh[cardinal] != MPI_PROC_NULL)
-    	 	    MPI_Isend(buffer[cardinal][SEND], 1, buffer_type[cardinal%2], neigh[cardinal], 0, comm_cart, &request[SEND][cardinal]); 
-	        else
-		        request[SEND][cardinal] = MPI_REQUEST_NULL;
+	    /*// Send limit rows/cols
+    	for(int cardinal=0; cardinal<4; cardinal++) 
+    	 	MPI_Isend(buffer[cardinal][SEND], 1, buffer_type[cardinal%2], neigh[cardinal], 0, comm_cart, &request[SEND][cardinal]); 
 
 	    // Send corners
     	for(int cardinal=4; cardinal<8; cardinal++)
-	        if(neigh[cardinal] != MPI_PROC_NULL)
-                MPI_Isend(&corner[cardinal][SEND], 1, MPI_CHAR, neigh[cardinal], 0, comm_cart, &request[SEND][cardinal]); 
-	        else
-		        request[SEND][cardinal] = MPI_REQUEST_NULL;
+            MPI_Isend(&corner[cardinal][SEND], 1, MPI_CHAR, neigh[cardinal], 0, comm_cart, &request[SEND][cardinal]); 
 
 	    // Receive limit rows/cols
     	for(int cardinal=0; cardinal<4; cardinal++)
-	        if(neigh[cardinal] != MPI_PROC_NULL)
-                MPI_Irecv(buffer[cardinal][RECV], 1, buffer_type[cardinal%2], neigh[cardinal], 0, comm_cart, &request[RECV][cardinal]);
-	        else
-		        request[RECV][cardinal] = MPI_REQUEST_NULL;
+            MPI_Irecv(buffer[cardinal][RECV], 1, buffer_type[cardinal%2], neigh[cardinal], 0, comm_cart, &request[RECV][cardinal]);
+
 
 	    // Receive corners
    	    for(int cardinal=4; cardinal<8; cardinal++)
-  	        if(neigh[cardinal] != MPI_PROC_NULL)
-	    	    MPI_Irecv(&corner[cardinal][RECV], 1, MPI_CHAR, neigh[cardinal], 0, comm_cart, &request[RECV][cardinal]); 
-	        else
-		        request[RECV][cardinal] = MPI_REQUEST_NULL;
+	        MPI_Irecv(&corner[cardinal][RECV], 1, MPI_CHAR, neigh[cardinal], 0, comm_cart, &request[RECV][cardinal]); 
 
+        */
 	    // Calc inner grid
         for (int i = 1; i < size[Y]-1; i++)
         {
