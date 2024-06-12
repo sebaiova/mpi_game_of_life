@@ -11,7 +11,7 @@ enum { SEND, RECV }; // Send/Recv
 
 /*Arma un grid de dos dimensiones con la cantidad de celdas cells
   cells debe ser par */
- void dimensionalize (int cells, int dims[2])
+static inline __attribute__((always_inline)) void dimensionalize (int cells, int dims[2])
 {
     assert(!(cells%2));
     int n, m;
@@ -25,7 +25,7 @@ enum { SEND, RECV }; // Send/Recv
     dims[Y]=m;
 }
 
- void distribute(const int world[2], const int dims[2], const int coords[2], int size[2], int begin[2])
+static inline __attribute__((always_inline)) void distribute(const int world[2], const int dims[2], const int coords[2], int size[2], int begin[2])
 {
     int base_size[2] = { world[X] / dims[X], world[Y] / dims[Y] };
     int extra_cols = world[X] % dims[X];
@@ -46,20 +46,20 @@ enum { SEND, RECV }; // Send/Recv
 
 /*Convierte cordenadas (i, j) globales a (y, x) locales
   si las coordenadas globales no se encuentran en el area local, retorna 0, sino 1 */
- int translate(int i, int j, int size[2], int begin[2], int* new_y, int* new_x)
+static inline __attribute__((always_inline)) int translate(int i, int j, int size[2], int begin[2], int* new_y, int* new_x)
 {
     *new_y = (i-begin[Y]); 
     *new_x = (j-begin[X]);
     return (*new_y >= 0 && *new_y < size[Y] && *new_x >= 0 && *new_x < size[X]);
 }
 
- void get_rank(MPI_Comm comm, int x, int y, int* rank)
+static inline __attribute__((always_inline)) void get_rank(MPI_Comm comm, int x, int y, int* rank)
 {
     int to_coords[2] = { x, y };
     MPI_Cart_rank(comm, to_coords, rank); 
 }
 
- void live(int neighbords, const char* old, char* next)
+static inline __attribute__((always_inline)) void live(int neighbords, const char* old, char* next)
 {
     if (*old == 1) //si tiene 2 o 3 vecinas vivas, sigue viva
         *next = (neighbords == 2 || neighbords == 3) ? 1 : 0;
@@ -68,7 +68,7 @@ enum { SEND, RECV }; // Send/Recv
         *next = (neighbords == 3) ? 1 : 0;
 }
 
- void row_limit_step(char** old, char** nextStep, char* buffer, int rel, int y, int width)
+static inline __attribute__((always_inline)) void row_limit_step(char** old, char** nextStep, char* buffer, int rel, int y, int width)
 {
     for(int x=1; x<width-1; x++)
     {
@@ -77,7 +77,7 @@ enum { SEND, RECV }; // Send/Recv
     }
 }
 
- void col_limit_step(char** old, char** nextStep, char* buffer, int rel, int x, int height)
+static inline __attribute__((always_inline)) void col_limit_step(char** old, char** nextStep, char* buffer, int rel, int x, int height)
 {
     for(int y=1; y<height-1; y++)
     {
@@ -202,19 +202,18 @@ int main(int argc, char *argv[])
     MPI_Request request[2][8];
     MPI_Status status[2][8];
 
-    for (int i = 0; i < 8; i++) 
-    {
-        request[SEND][i] = MPI_REQUEST_NULL;
-        request[RECV][i] = MPI_REQUEST_NULL;
-    }
-    
+    request[SEND][W] = MPI_REQUEST_NULL;
+    request[SEND][E] = MPI_REQUEST_NULL;
+    request[RECV][W] = MPI_REQUEST_NULL;
+    request[RECV][E] = MPI_REQUEST_NULL;
+
     for(int c=0; c<steps; c++)
     {
         MPI_Isend(&old[0][0], size[X], MPI_CHAR, neigh[N], 0, comm_cart, &request[SEND][N]);
         MPI_Isend(&old[size[Y]-1][0], size[X], MPI_CHAR, neigh[S], 0, comm_cart, &request[SEND][S]);
         MPI_Isend(&old[0][0],         1,       col_type, neigh[W], 0, comm_cart, &request[SEND][W]);
         MPI_Isend(&old[0][size[X]-1], 1,       col_type, neigh[E], 0, comm_cart, &request[SEND][E]);
-   
+    
         MPI_Isend(&old[0][0],                 1, MPI_CHAR, neigh[NW], 0, comm_cart, &request[SEND][NW]);
         MPI_Isend(&old[0][size[X]-1],         1, MPI_CHAR, neigh[NE], 0, comm_cart, &request[SEND][NE]);
         MPI_Isend(&old[size[Y]-1][0],         1, MPI_CHAR, neigh[SW], 0, comm_cart, &request[SEND][SW]);
@@ -225,10 +224,10 @@ int main(int argc, char *argv[])
         MPI_Irecv(buffer[W], size[Y], MPI_CHAR, neigh[W], 0, comm_cart, &request[RECV][W]);
         MPI_Irecv(buffer[E], size[Y], MPI_CHAR, neigh[E], 0, comm_cart, &request[RECV][E]);
 
-        MPI_Irecv(&corner[NW], 1, MPI_CHAR, neigh[NW], 0, comm_cart, &request[RECV][NW]);
-        MPI_Irecv(&corner[NE], 1, MPI_CHAR, neigh[NE], 0, comm_cart, &request[RECV][NE]);
-        MPI_Irecv(&corner[SW], 1, MPI_CHAR, neigh[SW], 0, comm_cart, &request[RECV][SW]);
-        MPI_Irecv(&corner[SE], 1, MPI_CHAR, neigh[SE], 0, comm_cart, &request[RECV][SE]);
+        MPI_Irecv(&neigh[NW], 1, MPI_CHAR, neigh[NW], 0, comm_cart, &request[RECV][NW]);
+        MPI_Irecv(&neigh[NE], 1, MPI_CHAR, neigh[NE], 0, comm_cart, &request[RECV][NE]);
+        MPI_Irecv(&neigh[SW], 1, MPI_CHAR, neigh[SW], 0, comm_cart, &request[RECV][SW]);
+        MPI_Irecv(&neigh[SE], 1, MPI_CHAR, neigh[SE], 0, comm_cart, &request[RECV][SE]);
 
 	    // Calc inner grid
         for (int i = 1; i < size[Y]-1; i++)
