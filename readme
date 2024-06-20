@@ -1,0 +1,11 @@
+compilar
+
+$ impcxx -O3 game.c
+
+ejecutar en el cluster
+
+$ qsub launch
+
+juntar grid
+
+$ ./juntar.sh
