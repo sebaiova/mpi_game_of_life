@@ -9,23 +9,25 @@ enum { N, E, S, W, NE, SE, SW, NW }; // Cardinal points
 enum { X, Y }; // Axis
 enum { SEND, RECV }; // Send/Recv 
 
-/*Arma un grid de dos dimensiones con la cantidad de celdas cells
-  cells debe ser par */
- void dimensionalize (int cells, int dims[2])
+/*Arma un grid de dos dimensiones con la cantidad de pr_blocks,
+  pr_blocks debe ser par */
+static inline void dimensionalize (int pr_blocks, int dims[2])
 {
-    assert(!(cells%2));
+    assert(!(pr_blocks%2));
     int n, m;
-    n = m = ceil(sqrt(cells));
-    while(n*m != cells)
+    n = m = ceil(sqrt(pr_blocks));
+    while(n*m != pr_blocks)
     {
         n--;
-        m = cells/n;
+        m = pr_blocks/n;
     }
     dims[X]=n;
     dims[Y]=m;
 }
 
- void distribute(const int world[2], const int dims[2], const int coords[2], int size[2], int begin[2])
+/*calcula el tamaño del bloque que corresponde a cada proceso size[X] size[Y]
+    y la coordenada global donde inicia dicho bloque begin[X] begin[Y] */
+static inline void distribute(const int world[2], const int dims[2], const int coords[2], int size[2], int begin[2])
 {
     int base_size[2] = { world[X] / dims[X], world[Y] / dims[Y] };
     int extra_cols = world[X] % dims[X];
@@ -46,20 +48,20 @@ enum { SEND, RECV }; // Send/Recv
 
 /*Convierte cordenadas (i, j) globales a (y, x) locales
   si las coordenadas globales no se encuentran en el area local, retorna 0, sino 1 */
- int translate(int i, int j, int size[2], int begin[2], int* new_y, int* new_x)
+static inline int translate(int i, int j, int size[2], int begin[2], int* new_y, int* new_x)
 {
     *new_y = (i-begin[Y]); 
     *new_x = (j-begin[X]);
     return (*new_y >= 0 && *new_y < size[Y] && *new_x >= 0 && *new_x < size[X]);
 }
 
- void get_rank(MPI_Comm comm, int x, int y, int* rank)
+static inline void get_rank(MPI_Comm comm, int x, int y, int* rank)
 {
     int to_coords[2] = { x, y };
     MPI_Cart_rank(comm, to_coords, rank); 
 }
 
- void live(int neighbords, const char* old, char* next)
+static inline void live(int neighbords, const char* old, char* next)
 {
     if (*old == 1) //si tiene 2 o 3 vecinas vivas, sigue viva
         *next = (neighbords == 2 || neighbords == 3) ? 1 : 0;
@@ -68,7 +70,7 @@ enum { SEND, RECV }; // Send/Recv
         *next = (neighbords == 3) ? 1 : 0;
 }
 
- void row_limit_step(char** old, char** nextStep, char* buffer, int rel, int y, int width)
+static inline void row_limit_step(char** old, char** nextStep, char* buffer, int rel, int y, int width)
 {
     for(int x=1; x<width-1; x++)
     {
@@ -77,7 +79,7 @@ enum { SEND, RECV }; // Send/Recv
     }
 }
 
- void col_limit_step(char** old, char** nextStep, char* buffer, int rel, int x, int height)
+static inline void col_limit_step(char** old, char** nextStep, char* buffer, int rel, int x, int height)
 {
     for(int y=1; y<height-1; y++)
     {
@@ -104,14 +106,14 @@ int main(int argc, char *argv[])
     }
 
     int steps;
-    int world[2];
+    int world_size[2];  /* tamaño de la grilla XY total juego */
 
-    if (fscanf(f, "cols %d\nrows %d\nsteps %d\n", &world[X], &world[Y], &steps) != 3)
+    if (fscanf(f, "cols %d\nrows %d\nsteps %d\n", &world_size[X], &world_size[Y], &steps) != 3)
     {
         printf("Error: formato de archivo incorrecto\n");
         return 1;
     }
-    assert(world[X]==world[Y]);
+    assert(world_size[X]==world_size[Y]);
 
     MPI_Init(&argc, &argv);
 
@@ -123,19 +125,20 @@ int main(int argc, char *argv[])
     //toroidal    
     const int periods[2] = {1, 1};
     int dims[2] = {0, 0};
+
    //MPI_Dims_create(ranks, ndims, dims); // Reemplaza a dimentionalize(ranks,dims)
     dimensionalize(ranks, dims);
  
     MPI_Cart_create(MPI_COMM_WORLD, ndims, dims, periods, 0, &comm_cart);
 
-    int rank;
-    int coords[2];
+    int rank;  /* rank del proceso que ejecuta */
+    int coords[2]; /*Coordenadas X Y del bloque del proceso en la topologia 2d*/
     MPI_Comm_rank(comm_cart, &rank);
     MPI_Cart_coords(comm_cart, rank, ndims, coords);
 
-    int size[2];
-    int begin[2];
-    distribute(world, dims, coords, size, begin);
+    int size[2];  /* tamaño XY del bloque del proceso */
+    int begin[2]; /* coordenada global XY de inicio del bloque del proceso*/
+    distribute(world_size, dims, coords, size, begin);
 
     // alloc grid data
     char* grid = (char*)malloc(size[X]*size[Y]*sizeof(char));
@@ -151,7 +154,7 @@ int main(int argc, char *argv[])
     char* line = (char*)malloc(size[X]);    
     int i = 0;
     int x, y;
-    while (i < world[Y] && fgets(line, size[X], f) != NULL) 
+    while (i < world_size[Y] && fgets(line, size[X], f) != NULL) 
     {
         int line_size = strlen(line) - 1;
         for (int j = 0; j < line_size; j++)
@@ -190,14 +193,14 @@ int main(int argc, char *argv[])
         buffer[cardinal] = (char*)malloc(sizeof(char)*size[cardinal%2]);
         
     char corner[8];
-    int neigh[8];
+    int rank_neigh[8];
 
-    MPI_Cart_shift(comm_cart, 0, 1, &neigh[W], &neigh[E]);
-    MPI_Cart_shift(comm_cart, 1, 1, &neigh[N], &neigh[S]);    
-    get_rank(comm_cart, coords[X]-1, coords[Y]-1, &neigh[NW]);
-    get_rank(comm_cart, coords[X]+1, coords[Y]+1, &neigh[SE]);
-    get_rank(comm_cart, coords[X]+1, coords[Y]-1, &neigh[NE]);
-    get_rank(comm_cart, coords[X]-1, coords[Y]+1, &neigh[SW]);
+    MPI_Cart_shift(comm_cart, 0, 1, &rank_neigh[W], &rank_neigh[E]);
+    MPI_Cart_shift(comm_cart, 1, 1, &rank_neigh[N], &rank_neigh[S]);   
+    get_rank(comm_cart, coords[X]-1, coords[Y]-1, &rank_neigh[NW]);
+    get_rank(comm_cart, coords[X]+1, coords[Y]+1, &rank_neigh[SE]);
+    get_rank(comm_cart, coords[X]+1, coords[Y]-1, &rank_neigh[NE]);
+    get_rank(comm_cart, coords[X]-1, coords[Y]+1, &rank_neigh[SW]);
 
     MPI_Request request[2][8];
     MPI_Status status[2][8];
@@ -210,25 +213,25 @@ int main(int argc, char *argv[])
     
     for(int c=0; c<steps; c++)
     {
-        MPI_Isend(&old[0][0], size[X], MPI_CHAR, neigh[N], 0, comm_cart, &request[SEND][N]);
-        MPI_Isend(&old[size[Y]-1][0], size[X], MPI_CHAR, neigh[S], 0, comm_cart, &request[SEND][S]);
-        MPI_Isend(&old[0][0],         1,       col_type, neigh[W], 0, comm_cart, &request[SEND][W]);
-        MPI_Isend(&old[0][size[X]-1], 1,       col_type, neigh[E], 0, comm_cart, &request[SEND][E]);
+        MPI_Isend(&old[0][0], size[X], MPI_CHAR, rank_neigh[N], 0, comm_cart, &request[SEND][N]);
+        MPI_Isend(&old[size[Y]-1][0], size[X], MPI_CHAR, rank_neigh[S], 0, comm_cart, &request[SEND][S]);
+        MPI_Isend(&old[0][0],         1,       col_type, rank_neigh[W], 0, comm_cart, &request[SEND][W]);
+        MPI_Isend(&old[0][size[X]-1], 1,       col_type, rank_neigh[E], 0, comm_cart, &request[SEND][E]);
    
-        MPI_Isend(&old[0][0],                 1, MPI_CHAR, neigh[NW], 0, comm_cart, &request[SEND][NW]);
-        MPI_Isend(&old[0][size[X]-1],         1, MPI_CHAR, neigh[NE], 0, comm_cart, &request[SEND][NE]);
-        MPI_Isend(&old[size[Y]-1][0],         1, MPI_CHAR, neigh[SW], 0, comm_cart, &request[SEND][SW]);
-        MPI_Isend(&old[size[Y]-1][size[X]-1], 1, MPI_CHAR, neigh[SE], 0, comm_cart, &request[SEND][SE]);
+        MPI_Isend(&old[0][0],                 1, MPI_CHAR, rank_neigh[NW], 0, comm_cart, &request[SEND][NW]);
+        MPI_Isend(&old[0][size[X]-1],         1, MPI_CHAR, rank_neigh[NE], 0, comm_cart, &request[SEND][NE]);
+        MPI_Isend(&old[size[Y]-1][0],         1, MPI_CHAR, rank_neigh[SW], 0, comm_cart, &request[SEND][SW]);
+        MPI_Isend(&old[size[Y]-1][size[X]-1], 1, MPI_CHAR, rank_neigh[SE], 0, comm_cart, &request[SEND][SE]);
 
-        MPI_Irecv(buffer[N], size[X], MPI_CHAR, neigh[N], 0, comm_cart, &request[RECV][N]);
-        MPI_Irecv(buffer[S], size[X], MPI_CHAR, neigh[S], 0, comm_cart, &request[RECV][S]);
-        MPI_Irecv(buffer[W], size[Y], MPI_CHAR, neigh[W], 0, comm_cart, &request[RECV][W]);
-        MPI_Irecv(buffer[E], size[Y], MPI_CHAR, neigh[E], 0, comm_cart, &request[RECV][E]);
+        MPI_Irecv(buffer[N], size[X], MPI_CHAR, rank_neigh[N], 0, comm_cart, &request[RECV][N]);
+        MPI_Irecv(buffer[S], size[X], MPI_CHAR, rank_neigh[S], 0, comm_cart, &request[RECV][S]);
+        MPI_Irecv(buffer[W], size[Y], MPI_CHAR, rank_neigh[W], 0, comm_cart, &request[RECV][W]);
+        MPI_Irecv(buffer[E], size[Y], MPI_CHAR, rank_neigh[E], 0, comm_cart, &request[RECV][E]);
 
-        MPI_Irecv(&corner[NW], 1, MPI_CHAR, neigh[NW], 0, comm_cart, &request[RECV][NW]);
-        MPI_Irecv(&corner[NE], 1, MPI_CHAR, neigh[NE], 0, comm_cart, &request[RECV][NE]);
-        MPI_Irecv(&corner[SW], 1, MPI_CHAR, neigh[SW], 0, comm_cart, &request[RECV][SW]);
-        MPI_Irecv(&corner[SE], 1, MPI_CHAR, neigh[SE], 0, comm_cart, &request[RECV][SE]);
+        MPI_Irecv(&corner[NW], 1, MPI_CHAR, rank_neigh[NW], 0, comm_cart, &request[RECV][NW]);
+        MPI_Irecv(&corner[NE], 1, MPI_CHAR, rank_neigh[NE], 0, comm_cart, &request[RECV][NE]);
+        MPI_Irecv(&corner[SW], 1, MPI_CHAR, rank_neigh[SW], 0, comm_cart, &request[RECV][SW]);
+        MPI_Irecv(&corner[SE], 1, MPI_CHAR, rank_neigh[SE], 0, comm_cart, &request[RECV][SE]);
 
 	    // Calc inner grid
         for (int i = 1; i < size[Y]-1; i++)
